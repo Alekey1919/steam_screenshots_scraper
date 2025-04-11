@@ -6,8 +6,19 @@ const STEAM_PROFILE_ID = "76561198153749412";
 const BASE_URL = `https://steamcommunity.com/profiles/${STEAM_PROFILE_ID}/screenshots/`;
 
 interface ScreenshotData {
-  game: string;
+  gameId: string;
   url: string;
+}
+
+interface Game {
+  id: string;
+  name: string;
+}
+
+// Utility function to extract game ID from URL
+function extractGameId(url: string): string | null {
+  const match = url.match(/appid=(\d+)/);
+  return match ? match[1] : null;
 }
 
 async function autoScroll(page: Page) {
@@ -45,16 +56,19 @@ async function scrapeSteamScreenshots() {
       }))
   );
 
-  const results: ScreenshotData[] = [];
+  const screenshots: ScreenshotData[] = [];
+  const games: Record<string, Game> = {};
 
-  console.log("gameOptions", gameOptions);
   let count = 0;
 
   for (const { label: gameName, elementId } of gameOptions) {
     if (count === 1) break; // Limit to 1 game for testing, remove this line to scrape all games
-
     count++;
+
     console.log(`🎮 Scraping screenshots for: ${gameName}`);
+
+    // Extract game ID from the elementId (format: "app_730")
+    const gameIdFromElement = elementId.replace("app_", "");
 
     // Open the dropdown
     await page.click("#sharedfiles_filterselect_app_activeoption");
@@ -66,6 +80,15 @@ async function scrapeSteamScreenshots() {
     // Now you can click the specific game option
     await page.click(`#${elementId}`);
     await setTimeout(2000); // wait for AJAX refresh
+
+    // Get the current URL to extract the game ID
+    const currentUrl = page.url();
+    const gameId = extractGameId(currentUrl) || gameIdFromElement;
+    
+    // Add to games mapping
+    if (gameId && !games[gameId]) {
+      games[gameId] = { id: gameId, name: gameName };
+    }
 
     // Handle infinite scroll
     let prevHeight = 0;
@@ -95,8 +118,9 @@ async function scrapeSteamScreenshots() {
           const full = (img as HTMLImageElement).src;
           return full.split("?")[0]; // Remove query string so image is in full resolution
         });
-        results.push({ game: gameName, url: imgUrl });
-        console.log(`✅ ${gameName}: ${imgUrl}`);
+        
+        screenshots.push({ gameId, url: imgUrl });
+        console.log(`✅ ${gameName} (ID: ${gameId}): ${imgUrl}`);
       } catch {
         console.warn(`⚠️ Failed to get image from: ${link}`);
       }
@@ -110,11 +134,20 @@ async function scrapeSteamScreenshots() {
 
   // Save results
   await fs.mkdir("./data", { recursive: true });
+  
+  // Save screenshots data
   await fs.writeFile(
     "./data/screenshots.json",
-    JSON.stringify(results, null, 2)
+    JSON.stringify(screenshots, null, 2)
   );
   console.log("📁 Screenshots saved to ./data/screenshots.json");
+  
+  // Save games data
+  await fs.writeFile(
+    "./data/games.json",
+    JSON.stringify(Object.values(games), null, 2)
+  );
+  console.log("📁 Games data saved to ./data/games.json");
 }
 
 scrapeSteamScreenshots().catch(console.error);
