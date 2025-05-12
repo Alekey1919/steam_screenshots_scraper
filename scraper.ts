@@ -1,6 +1,13 @@
 import puppeteer, { Page } from "puppeteer";
 import { setTimeout } from "node:timers/promises";
 import fs from "fs/promises";
+import readline from "readline";
+
+// Create readline interface for user interaction
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
 
 const STEAM_PROFILE_ID = "76561198153749412";
 const BASE_URL = `https://steamcommunity.com/profiles/${STEAM_PROFILE_ID}/screenshots/`;
@@ -41,7 +48,7 @@ async function autoScroll(page: Page) {
 }
 
 async function scrapeSteamScreenshots() {
-  const browser = await puppeteer.launch({ headless: false });
+  const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
 
   await page.goto(BASE_URL, { waitUntil: "networkidle2" });
@@ -59,12 +66,34 @@ async function scrapeSteamScreenshots() {
   const screenshots: ScreenshotData[] = [];
   const games: Record<string, Game> = {};
 
-  let count = 0;
+  // Prompt user for game selection
+  console.log("Found the following games:");
+  gameOptions.forEach((game, i) => {
+    console.log(`${i + 1}. ${game.label}`);
+  });
 
-  for (const { label: gameName, elementId } of gameOptions) {
-    if (count === 1) break; // Limit to 1 game for testing, remove this line to scrape all games
-    count++;
+  const gamesToScrape = await new Promise<
+    { label: string; elementId: string }[]
+  >((resolve) => {
+    rl.question(
+      "Do you want to scrape all games or select a specific one? (all/number): ",
+      (answer) => {
+        if (answer.toLowerCase() === "all") {
+          resolve(gameOptions);
+        } else {
+          const index = parseInt(answer) - 1;
+          if (isNaN(index) || index < 0 || index >= gameOptions.length) {
+            console.log("Invalid selection. Defaulting to all games.");
+            resolve(gameOptions);
+          } else {
+            resolve([gameOptions[index]]);
+          }
+        }
+      }
+    );
+  });
 
+  for (const { label: gameName, elementId } of gamesToScrape) {
     console.log(`🎮 Scraping screenshots for: ${gameName}`);
 
     // Extract game ID from the elementId (format: "app_730")
@@ -84,7 +113,7 @@ async function scrapeSteamScreenshots() {
     // Get the current URL to extract the game ID
     const currentUrl = page.url();
     const gameId = extractGameId(currentUrl) || gameIdFromElement;
-    
+
     // Add to games mapping
     if (gameId && !games[gameId]) {
       games[gameId] = { id: gameId, name: gameName };
@@ -118,7 +147,7 @@ async function scrapeSteamScreenshots() {
           const full = (img as HTMLImageElement).src;
           return full.split("?")[0]; // Remove query string so image is in full resolution
         });
-        
+
         screenshots.push({ gameId, url: imgUrl });
         console.log(`✅ ${gameName} (ID: ${gameId}): ${imgUrl}`);
       } catch {
@@ -134,20 +163,23 @@ async function scrapeSteamScreenshots() {
 
   // Save results
   await fs.mkdir("./data", { recursive: true });
-  
+
   // Save screenshots data
   await fs.writeFile(
     "./data/screenshots.json",
     JSON.stringify(screenshots, null, 2)
   );
   console.log("📁 Screenshots saved to ./data/screenshots.json");
-  
+
   // Save games data
   await fs.writeFile(
     "./data/games.json",
     JSON.stringify(Object.values(games), null, 2)
   );
   console.log("📁 Games data saved to ./data/games.json");
+
+  // Close readline interface
+  rl.close();
 }
 
 scrapeSteamScreenshots().catch(console.error);
